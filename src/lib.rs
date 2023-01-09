@@ -46,31 +46,31 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-pub use event::Event;
+pub use event::PollEvents;
 
 /// Source readiness interest.
 pub mod event {
-    /// Poll that can be waited for.
-    pub type Event = libc::c_short;
+    /// Events which should be - or were polled for a given file descriptor.
+    pub type PollEvents = libc::c_short;
 
     /// The associated file is ready to be read.
-    pub const READ: Event = POLLIN | POLLPRI;
+    pub const READ: PollEvents = POLLIN | POLLPRI;
     /// The associated file is ready to be written.
-    pub const WRITE: Event = POLLOUT | libc::POLLWRBAND;
+    pub const WRITE: PollEvents = POLLOUT | libc::POLLWRBAND;
     /// The associated file is ready.
-    pub const ALL: Event = READ | WRITE;
+    pub const ALL: PollEvents = READ | WRITE;
     /// Don't wait for any events.
-    pub const NONE: Event = 0x0;
+    pub const NONE: PollEvents = 0x0;
 
     // NOTE: POLLERR, POLLNVAL and POLLHUP are ignored as *interests*, and will
     // always be set automatically in the output events.
 
     /// The associated file is available for read operations.
-    const POLLIN: Event = libc::POLLIN;
+    const POLLIN: PollEvents = libc::POLLIN;
     /// There is urgent data available for read operations.
-    const POLLPRI: Event = libc::POLLPRI;
+    const POLLPRI: PollEvents = libc::POLLPRI;
     /// The associated file is available for write operations.
-    const POLLOUT: Event = libc::POLLOUT;
+    const POLLOUT: PollEvents = libc::POLLOUT;
 }
 
 /// Optional timeout.
@@ -127,13 +127,18 @@ impl From<Option<Duration>> for Timeout {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Default)]
 pub struct PollFd {
+    /// File descriptor to poll events for
     fd: RawFd,
-    events: Event,
-    revents: Event,
+    /// Events in which we are interested for this file descriptor.
+    ///
+    /// NB: Events which fired got re-set after the poll operation.
+    events: PollEvents,
+    /// Events which have fired during the poll.
+    revents: PollEvents,
 }
 
 impl PollFd {
-    fn new(fd: RawFd, events: Event) -> Self {
+    fn new(fd: RawFd, events: PollEvents) -> Self {
         Self {
             fd,
             events,
@@ -152,12 +157,12 @@ impl PollFd {
     }
 
     /// Set events to wait for on this source.
-    pub fn set(&mut self, events: Event) {
+    pub fn set(&mut self, events: PollEvents) {
         self.events |= events;
     }
 
     /// Unset events to wait for on this source.
-    pub fn unset(&mut self, events: Event) {
+    pub fn unset(&mut self, events: PollEvents) {
         self.events &= !events;
     }
 
@@ -171,7 +176,7 @@ impl PollFd {
         self.revents & event::READ != 0
     }
 
-    /// The source has be disconnected.
+    /// The source has disconnected.
     pub fn has_hangup(self) -> bool {
         self.revents & libc::POLLHUP != 0
     }
@@ -181,7 +186,7 @@ impl PollFd {
         self.revents & libc::POLLERR != 0
     }
 
-    /// The sourc is not valid.
+    /// The source is not valid.
     pub fn is_invalid(self) -> bool {
         self.revents & libc::POLLNVAL != 0
     }
@@ -282,7 +287,7 @@ impl<K> Poll<K> {
     /// for two different sources.
     ///
     /// Resets the information about previously collected events.
-    pub fn register(&mut self, key: K, fd: &impl AsRawFd, events: Event) {
+    pub fn register(&mut self, key: K, fd: &impl AsRawFd, events: PollEvents) {
         self.reset();
         self.insert(key, PollFd::new(fd.as_raw_fd(), events));
     }
@@ -366,7 +371,7 @@ impl<K: PartialEq> Poll<K> {
     /// Set the events to poll for on a source identified by its key.
     ///
     /// Resets the information about previously collected events.
-    pub fn set(&mut self, key: &K, events: Event) -> bool {
+    pub fn set(&mut self, key: &K, events: PollEvents) -> bool {
         self.reset();
         if let Some(ix) = self.find(key) {
             self.list[ix].set(events);
@@ -378,7 +383,7 @@ impl<K: PartialEq> Poll<K> {
     /// Unset event interests on a source.
     ///
     /// Resets the information about previously collected events.
-    pub fn unset(&mut self, key: &K, events: Event) -> bool {
+    pub fn unset(&mut self, key: &K, events: PollEvents) -> bool {
         self.reset();
         if let Some(ix) = self.find(key) {
             self.list[ix].unset(events);
